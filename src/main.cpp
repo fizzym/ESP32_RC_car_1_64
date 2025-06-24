@@ -14,7 +14,7 @@
 
 #define ZERO_PWM 1400
 #define MAX_PWM 3000
-#define MIN_PWM 200
+#define MIN_PWM 100
 
 int throttle = 0;
 int steering = 0;
@@ -22,7 +22,8 @@ int steering = 0;
 int state = 1;
 int iteration = 0;
 
-int increment = 100;
+//int increment = 100;
+int increment = 1200;
 
 void setup() {
   pinMode(LED_PIN, OUTPUT);
@@ -54,19 +55,23 @@ void loop() {
   // state 2 increases / decreases throttle and steering by 100 every 
   // 1 second
   if (state == 2){
-    increment = (throttle >= MAX_PWM) ? -100 : increment;
-    increment = (throttle <= MIN_PWM) ? 100 : increment;
+    increment = (throttle >= MAX_PWM) ? -800 : increment;
+    increment = (throttle <= MIN_PWM) ? 800 : increment;
     throttle += increment;
+
+    throttle = 1200;
+    steering = iteration % 2 == 0 ? 3000 : 0;
 
     throttle = (throttle >= MAX_PWM) ? MAX_PWM : throttle;
     ledcWrite(PWM_CHNL_THROTTLE, throttle);
+    ledcWrite(PWM_CHNL_STEERING, steering);
   }
 
   iteration++;
 
-  delay(500); // brief delay of 500ms
+  delay(2000); // brief delay of 500ms
   digitalWrite(LED_PIN, HIGH);
-  delay(500);
+  delay(2000);
   digitalWrite(LED_PIN, LOW);
 
 
