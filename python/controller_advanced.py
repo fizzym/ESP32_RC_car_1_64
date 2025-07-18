@@ -50,9 +50,8 @@ while (True):
     if regexp.search(command):
         write_serial(command)
         print("Sent command: {}".format(command))
+        reply = read_serial(MAX_BUFF_LEN)
+        if (len(reply) > 0):
+            print(reply)
     else:
         print("Unrecognized command: {}".format(command))
-    
-    reply = read_serial(MAX_BUFF_LEN)
-    if (len(reply) > 0):
-        print(reply)

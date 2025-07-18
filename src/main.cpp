@@ -112,10 +112,12 @@ void loop() {
       default: //stop
         throttle = ZERO_PWM;
         steering = ZERO_PWM;
+        // To investigate dead band s5 is ZERO_PWM while s0 is 
+        // ZERO_PWM - 50 and S9 is ZERO_PWM + 50
         Serial.print("ESP: Stopped. Throttle: ");
-        Serial.print(throttle);
+        Serial.print(throttle -50 + ((cmd_strength - 100) / 10));
         Serial.print(" Steering: ");
-        Serial.print(steering);
+        Serial.print(steering -50 + ((cmd_strength - 100) / 10));
         break;
     }
     digitalWrite(LED_PIN, HIGH);
