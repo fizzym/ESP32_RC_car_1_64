@@ -12,9 +12,13 @@
 #define PWM_CHNL_STEERING 3
 #define PWM_PIN_STEERING 9
 
+#define INCREMENT 100
+
 #define ZERO_PWM 1400
 #define MAX_PWM 3200
 #define MIN_PWM 0
+
+#define MAX_BUFF_LEN 2
 
 int throttle = ZERO_PWM;
 int steering = ZERO_PWM;
@@ -24,7 +28,10 @@ int prev_steering = ZERO_PWM;
 int state = 1;
 int iteration = 0;
 
-char character;
+uint8_t cmd_buffer[MAX_BUFF_LEN];
+uint8_t character;
+uint8_t i = 0;
+uint32_t cmd_strength = 0;
 
 //int increment = 100;
 int increment = 1200;
@@ -39,53 +46,87 @@ void setup() {
   ledcSetup(PWM_CHNL_STEERING, PWM_FREQ_HZ, PWM_BIT_DEPTH);
   ledcAttachPin(PWM_PIN_THROTTLE, PWM_CHNL_THROTTLE);
   ledcAttachPin(PWM_PIN_STEERING, PWM_CHNL_STEERING);
-
-  digitalWrite(LED_PIN, LOW);
 }
 
 void loop() {
 
   // Receiving a command from laptop:
   if (Serial.available() > 0){
-    character = Serial.read();
 
-    switch (character) {
-      case 'f':
-        throttle = MAX_PWM;
-        steering = ZERO_PWM;
-        Serial.print("ESP: Driving forward: ");
+    // Read a command from serial. Commands are formatted as 'ax' where
+    // a is a character determining command type and x is a numerical
+    // indicating command strength percentage in increments of 10% 
+    // this is (mapped to PWM);
+    i = 0;
+    character = Serial.read();
+    while (character != '\n'){
+      cmd_buffer[i] = character;
+      i++;
+      character = Serial.read();
+
+      //In case we are receiving more characters than expected stop the
+      //robot.
+      if (i > MAX_BUFF_LEN){
+        cmd_buffer[0] = 's';
+        cmd_buffer[1] = '0';
         break;
-      case 'b':
-        throttle = MIN_PWM;
+      }
+    }
+
+    // I subtract 48 because ASCII(0) = 48
+    cmd_strength = (cmd_buffer[1] - 48 + 1) * INCREMENT;
+
+    switch (cmd_buffer[0]) {
+      case 'f': // forward PWM is between MIN_PWM and ZERO_PWM
+        throttle = ZERO_PWM - cmd_strength;
         steering = ZERO_PWM;
-        Serial.print("ESP: Driving backward: ");
+        Serial.print("ESP: Driving forward. Throttle: ");
+        Serial.print(throttle);
+        Serial.print(" Steering: ");
+        Serial.print(steering);
+        break;
+      case 'b': // backward PWM is between ZERO_PWM and MAX_PWM
+        throttle = ZERO_PWM + cmd_strength;
+        steering = ZERO_PWM;
+        Serial.print("ESP: Driving backward. Throttle: ");
+        Serial.print(throttle);
+        Serial.print(" Steering: ");
+        Serial.print(steering);
         break;
       case 'l':
-        throttle = MAX_PWM;
-        steering = MAX_PWM;
-        Serial.print("ESP: Driving left: ");
+        throttle = MIN_PWM;
+        steering = ZERO_PWM + cmd_strength;
+        Serial.print("ESP: Driving left. Throttle: ");
+        Serial.print(throttle);
+        Serial.print(" Steering: ");
+        Serial.print(steering);
         break;
       case 'r':
-        throttle = MAX_PWM;
-        steering = MIN_PWM;
-        Serial.print("ESP: Driving right: ");
+        throttle = MIN_PWM;
+        steering = ZERO_PWM - cmd_strength;
+        Serial.print("ESP: Driving right. Throttle: ");
+        Serial.print(throttle);
+        Serial.print(" Steering: ");
+        Serial.print(steering);
         break;
       default: //stop
         throttle = ZERO_PWM;
         steering = ZERO_PWM;
-        Serial.print("ESP: Stopped: ");
+        Serial.print("ESP: Stopped. Throttle: ");
+        Serial.print(throttle);
+        Serial.print(" Steering: ");
+        Serial.print(steering);
         break;
     }
-    //digitalWrite(LED_PIN, HIGH);
+    digitalWrite(LED_PIN, HIGH);
   }
   else {
-    //digitalWrite(LED_PIN, LOW);
+    digitalWrite(LED_PIN, LOW);
   }
 
 
-  // state 1 establishes connection
+  // state 0 establishes connection
   if (state == 1){
-    digitalWrite(LED_PIN, LOW);
     // pot read max value: 4096 (12bit)
     throttle = ZERO_PWM;
     steering = ZERO_PWM;
@@ -95,24 +136,13 @@ void loop() {
     ledcWrite(PWM_CHNL_THROTTLE, throttle);
     ledcWrite(PWM_CHNL_STEERING, steering);
 
-    if (iteration > 1000){
+    if (iteration > 10000){
       state = 2;
     }
   }
 
-
-  // state 2 increases / decreases throttle and steering by 100 every 
-  // 1 second
+  // stat 2 driving
   if (state == 2){
-    // increment = (throttle >= MAX_PWM) ? -800 : increment;
-    // increment = (throttle <= MIN_PWM) ? 800 : increment;
-    // throttle += increment;
-
-    // throttle = 1200;
-    // steering = iteration % 2 == 0 ? 3000 : 0;
-
-    digitalWrite(LED_PIN, HIGH);
-
     //Sanitize controls before sending them out to motors:
     throttle = (throttle <= MIN_PWM) ? MIN_PWM : throttle;
     throttle = (throttle >= MAX_PWM) ? MAX_PWM : throttle;
