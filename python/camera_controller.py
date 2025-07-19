@@ -117,10 +117,10 @@ class Camera_Interface:
     _RED_UPPER = np.array([_HUE_MAX, _SAT_MAX, _VAL_MAX])
 
     # Use these for inverse perspective transform
-    _TOP_LEFT  = (98, 16)
-    _TOP_RIGHT = (517, 28)
-    _BOT_LEFT  = (32, 464)
-    _BOT_RIGHT = (560, 470)
+    _TOP_LEFT  = (80, 2)
+    _TOP_RIGHT = (528, 9)
+    _BOT_LEFT  = (34, 472)
+    _BOT_RIGHT = (561, 466)
 
     # minimum number of pixel in the mask to consider it a valid image
     _MIN_PIXELS = 10
@@ -156,8 +156,8 @@ class Camera_Interface:
         if ret:
             self.prev_failed_img = False
             (rows, cols, chnl) = raw_frame.shape
-            #cv2.imshow("raw frame", raw_frame)
-            #cv2.waitKey(1)
+            cv2.imshow("raw frame", raw_frame)
+            cv2.waitKey(1)
 
             corrected_frame = cv2.warpPerspective(raw_frame, 
                                                   self.perspective_matrix,
@@ -167,8 +167,8 @@ class Camera_Interface:
             blurred_img = cv2.GaussianBlur(corrected_frame, (5, 5), 0)
             hsv_img = cv2.cvtColor(blurred_img, cv2.COLOR_BGR2HSV)
             mask = cv2.inRange(hsv_img, self._RED_LOWER, self._RED_UPPER)
-            # cv2.imshow("red mask", mask)
-            # cv2.waitKey(1)
+            #cv2.imshow("red mask", mask)
+            #cv2.waitKey(1)
 
             # Find center of mass of red blob on X
             # I collapse the mask on X by summing each column and then I find
@@ -184,7 +184,7 @@ class Camera_Interface:
                 print("Can't get x position.")
                 return (ERROR_VALUE, ERROR_VALUE, 
                         ERROR_VALUE, ERROR_VALUE,
-                        raw_frame)
+                        corrected_frame)
 
             # Find center of mass of red blob on Y (same as X)
             mask_squish_on_y = np.sum(mask, axis=1)
@@ -198,7 +198,7 @@ class Camera_Interface:
                 print("Can't get y position.")
                 return (ERROR_VALUE, ERROR_VALUE, 
                         ERROR_VALUE, ERROR_VALUE, 
-                        raw_frame)
+                        corrected_frame)
 
             # Calculate velocity:
             if self.prev_failed_img:
@@ -207,11 +207,16 @@ class Camera_Interface:
                 current_time = time.time()
                 time_delta = current_time - self._prev_time
                 self._prev_time = current_time
-                x_dot = int((x_pos - self._prev_x) / time_delta)
-                y_dot = int((y_pos - self._prev_y) / time_delta)
-                x_dot = x_dot if x_dot > 1 else 0
-                y_dot = y_dot if y_dot > 1 else 0
+                x_delta = (x_pos - self._prev_x)
+                y_delta = (y_pos - self._prev_y)
+                x_dot = int(x_delta / time_delta)
+                y_dot = int(y_delta / time_delta)
 
+                # ignore any velocity when x or y delta are smaller than 
+                # THRESHOLD_DELTA (there is a lot of one pixel noise)
+                THRESHOLD_DELTA = 4
+                x_dot = x_dot if x_delta**2 > THRESHOLD_DELTA else 0
+                y_dot = y_dot if y_delta**2 > THRESHOLD_DELTA else 0
 
             if (False):
                 print("####")
@@ -240,14 +245,17 @@ class Driver_Controller:
 
     # scale by which velocity should be amplified for display purposes
     _VELOCITY_SCALE = 1
+    _HEADING_SCALE = 16
 
-    SETPOINT_X = 451
-    SETPOINT_Y = 290
+    _SET_POINTS_ARRAY = [[164, 215], [495, 215]]
+
+    _THROTTLE_FWD = 4
+    _THROTTLE_BKD = 1
 
     # Thresholds to stop the car:
     _CLOSE_ENOUGH = 100 # when it is close enough to the setpoint
     # When it is close enough to the border
-    BORDER_MIN = 50
+    BORDER_MIN = 200
 
 
     def __init__(self, car_coms):
@@ -259,6 +267,19 @@ class Driver_Controller:
         self.error_magnitude = 0.0
         self.current_frame = None
 
+        # The angle (in rad) the car is facing (0 is facing along x axis)
+        self.heading = 0
+        (self.heading_x, self.heading_y) = (0, 0)
+
+        self.current_setpoint = 0
+        self.setpoint_x = self._SET_POINTS_ARRAY[self.current_setpoint][0]
+        self.setpoint_y = self._SET_POINTS_ARRAY[self.current_setpoint][1]
+
+        self.out_of_bounds = 0
+
+        self.car_command = 's5'
+        self.direction = 'f'
+        self.throttle = 0
         self.esp_control = car_coms
         return
     
@@ -274,39 +295,95 @@ class Driver_Controller:
         (self.x_pos, self.y_pos) = (x, y)
         (self.x_dot, self.y_dot) = (x_dot, y_dot)
 
-        self.error_x = x - self.SETPOINT_X
-        self.error_y = y - self.SETPOINT_Y
+        self.error_x = x - self.setpoint_x
+        self.error_y = y - self.setpoint_y
         self.error_magnitude = math.sqrt(self.error_x**2 + self.error_y**2)
 
         self.current_frame = current_frame
         self.display_image()
-        
 
+        # Check if this state is drivable
+        self.car_command = 's5'
         if ((self.x_pos is ERROR_VALUE) or
-            (self.x_pos < self.BORDER_MIN) or
+            (self.y_pos is ERROR_VALUE) or
+            (self.x_dot is ERROR_VALUE) or
+            (self.y_dot is ERROR_VALUE)):
+            car_coms.write_serial(self.car_command)
+            print("Error: position or velocity error. " + 
+                  "Car command: {}".format(self.car_command))
+            return
+        
+        # Only update the heading if the velocities are non-zero:
+        if ((x_dot**2 > 0)):
+            self.heading = math.atan(self.y_dot/self.x_dot)
+            self.heading_x = math.cos(self.heading)
+            self.heading_y = math.sin(self.heading)
+            print("(x_dot, y_dot): ({:.2f},{:.2f})".format(x_dot, y_dot))
+            print("Updating heading 1: {:.2f}".format(self.heading))
+        else:
+            if (y_dot**2 > 0):
+                self.heading = 1.57 * (1 if self.y_dot >= 0 else -1)
+                self.heading_x = math.cos(self.heading)
+                self.heading_y = math.sin(self.heading)
+                print("(x_dot, y_dot): ({:.2f},{:.2f})".format(x_dot, y_dot))
+                print("Updating heading 2: {:.2f}".format(self.heading))
+
+        # Check if we are too close to the border 
+        if ((self.x_pos < self.BORDER_MIN) or
             (self.y_pos < self.BORDER_MIN) or
             (self.x_pos > IMG_WIDTH - self.BORDER_MIN) or
             (self.y_pos > IMG_HEIGHT - self.BORDER_MIN)):
-            car_command = 's5'
-            car_coms.write_serial(car_command)
-            print("Error: stop car. Car command: {}".format(car_command))
+            # Only change direction once every FRAME_DELAY frames (this way we
+            # won't dither back and forth)
+            FRAME_DELAY = 60
+            self.out_of_bounds += 1
+            if self.out_of_bounds % FRAME_DELAY == 0:
+                self.direction = 'f' if self.direction == 'b' else 'b'
+                self.throttle = (self._THROTTLE_FWD if self.direction == 'f' 
+                             else self._THROTTLE_BKD)
+                self.steering = ('l' if self.direction == 'f' else 'r')
+            self.car_command = "{}{}".format(self.direction, self.throttle)
+            car_coms.write_serial(self.car_command)
+            print("Error: <<< OUT OF BOUNDS >>>. Reverse direction." + 
+                  "Car command: {}".format(self.car_command))
             return
-
-        forward_kp = 0.018
-        forward_magnitude = self.error_magnitude * forward_kp
-
-        car_command = 's5'
-        if (self.error_magnitude > self._CLOSE_ENOUGH):
-            car_command = 'f{}'.format(int(forward_magnitude))
         else:
-            car_command = 's5'
-        
-        car_coms.write_serial(car_command)
+            print(">>> In bounds <<<<")
+            self.out_of_bounds = 0
 
-        print("****")
-        print("Error x: {} Error y: {} Error magnitude: {:.2f}".
-              format(self.error_x, self.error_y, self.error_magnitude))
-        print("Car command: {}".format(car_command))
+        # Determine the command for the car:
+        # Determine the direction
+        error_vector = np.array([self.error_x, self.error_y])
+        heading_vector = np.array([self.heading_x, self.heading_y])
+        # Go forward if the dot product is positive and backwards if negative
+        self.direction = 'f' if np.dot(error_vector, heading_vector) > 0 else 'b'
+        # Determine the speed        forward_magnitude = 3 if direction is 'f' else 2 #self.error_magnitude * forward_kp
+
+        forward_kp = 0.01
+        self.throttle = (self._THROTTLE_FWD if self.direction == 'f' 
+                        else self._THROTTLE_BKD) #self.error_magnitude * forward_kp
+
+        # Check if we are close enough to current setpoint:
+        if (self.error_magnitude > self._CLOSE_ENOUGH):
+            self.car_command = '{}{}'.format(self.direction,int(self.throttle))
+        else:
+            self.car_command = 's5'
+            # Set the setpoint to the next setpoint:
+            self.current_setpoint = ((self.current_setpoint + 1) 
+                                     if (self.current_setpoint < (len(self._SET_POINTS_ARRAY) - 1)) 
+                                     else 0)
+            self.setpoint_x = self._SET_POINTS_ARRAY[self.current_setpoint][0]
+            self.setpoint_y = self._SET_POINTS_ARRAY[self.current_setpoint][1]
+
+        # Send command        
+        car_coms.write_serial(self.car_command)
+
+        if (False):
+            print("*** Driving: ")
+            print("Error (x, y): ({}, {}) Error magnitude: {:.2f}".
+                format(self.error_x, self.error_y, self.error_magnitude))
+            print("Car heading: {}".format(self.heading))
+            print("Car command: {}".format(car_command))
     
     def display_image(self):
         txt_font = cv2.FONT_HERSHEY_SIMPLEX
@@ -319,7 +396,7 @@ class Driver_Controller:
 
         # Display image with (x,y) coordinates on it
         circ_center = (self.x_pos, self.y_pos)
-        circ_radius = 10
+        circ_radius = 5
         circ_color = (255, 0, 255)
         circ_line_thickness = -1
         # circle is at pos (x,y)
@@ -330,12 +407,12 @@ class Driver_Controller:
                     txt_start_pos, txt_font, txt_font_scale, txt_color,
                     txt_font_thickness, txt_line_type)
         
-        # Display velocity vector (x_dot, y_dot)
+        # Display car velocity vector (x_dot, y_dot)
         line_start = (self.x_pos, self.y_pos)
         line_end = (self.x_pos + int(self.x_dot * self._VELOCITY_SCALE), 
                     self.y_pos + int(self.y_dot * self._VELOCITY_SCALE))
         line_color = (0, 255, 255)
-        line_thickness = 2
+        line_thickness = 1
         # line is representing velocity vector
         cv2.line(self.current_frame, line_start, line_end, line_color, 
                  line_thickness)
@@ -344,27 +421,46 @@ class Driver_Controller:
                     format(self.x_dot, self.y_dot), 
                     txt_start_pos, txt_font, txt_font_scale, txt_color,
                     txt_font_thickness, txt_line_type)
+        
+        # Display car heading (x, y)
+        line_end = (self.x_pos + int(self.heading_x * self._HEADING_SCALE), 
+                    self.y_pos + int(self.heading_y * self._HEADING_SCALE))
+        line_color = (255, 255, 0)
+        cv2.line(self.current_frame, line_start, line_end, line_color, 
+                 line_thickness)
+        txt_start_pos = (txt_start_pos[0], txt_start_pos[1] + TXT_INCREMENT)
+        cv2.putText(self.current_frame,'Heading rad | (x, y): {} | ({:.2f},{:.2f})'.
+                    format(self.heading, self.heading_x, self.heading_y), 
+                    txt_start_pos, txt_font, txt_font_scale, txt_color,
+                    txt_font_thickness, txt_line_type)
 
         # Display location of set point
-        circ_center = (self.SETPOINT_X, self.SETPOINT_Y)
+        circ_center = (self.setpoint_x, self.setpoint_y)
         circ_radius = 5
         circ_color = (0, 255, 0)
         cv2.circle(self.current_frame, circ_center, circ_radius, circ_color,
                    circ_line_thickness)
         txt_start_pos = (txt_start_pos[0], txt_start_pos[1] + TXT_INCREMENT)
         cv2.putText(self.current_frame,'Setpoint X, Y: {}, {}'.
-                    format(self.SETPOINT_X, self.SETPOINT_Y), 
+                    format(self.setpoint_x, self.setpoint_y), 
                     txt_start_pos, txt_font, txt_font_scale, txt_color,
                     txt_font_thickness, txt_line_type)
 
         # Display error vector
-        line_end = (self.SETPOINT_X, self.SETPOINT_Y)
+        line_end = (self.setpoint_x, self.setpoint_y)
         line_color = (0, 255, 0)
         cv2.line(self.current_frame, line_start, line_end, line_color, 
                  line_thickness)
         txt_start_pos = (txt_start_pos[0], txt_start_pos[1] + TXT_INCREMENT)
         cv2.putText(self.current_frame,'Error magnitude: {:.2f}'.
                     format(self.error_magnitude), 
+                    txt_start_pos, txt_font, txt_font_scale, txt_color,
+                    txt_font_thickness, txt_line_type)
+        
+        # Car command
+        txt_start_pos = (txt_start_pos[0], txt_start_pos[1] + TXT_INCREMENT)
+        cv2.putText(self.current_frame,'Car command: {}'.
+                    format(self.car_command), 
                     txt_start_pos, txt_font, txt_font_scale, txt_color,
                     txt_font_thickness, txt_line_type)
 
