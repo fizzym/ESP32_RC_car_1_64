@@ -86,6 +86,7 @@ void loop() {
 
     // I subtract 48 because ASCII(0) = 48
     cmd_strength = (cmd_buffer[1] - 48 + 1) * INCREMENT;
+    stopped = false;
 
     switch (cmd_buffer[0]) {
       case 'f': // forward PWM is between MIN_PWM and ZERO_PWM

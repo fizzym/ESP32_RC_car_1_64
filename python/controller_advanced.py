@@ -51,7 +51,7 @@ while (True):
      'f2l0' : forward 2; left 0 (i.e. straight)
      'b3r2' : backward 3; right 2
     '''
-    command = input("Enter command (fxlx, bxlx, lx, rx, s): ")
+    command = input("Enter command of the form (f3l2, b1r2, s5s5): ")
 
     # Sanitize the command:
     regexp = re.compile(r"^[fbs]\d[lrs]\d$")
