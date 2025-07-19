@@ -120,7 +120,7 @@ class Camera_Interface:
     _TOP_LEFT  = (80, 2)
     _TOP_RIGHT = (528, 9)
     _BOT_LEFT  = (34, 472)
-    _BOT_RIGHT = (561, 466)
+    _BOT_RIGHT = (580, 473)
 
     # minimum number of pixel in the mask to consider it a valid image
     _MIN_PIXELS = 10
@@ -156,8 +156,8 @@ class Camera_Interface:
         if ret:
             self.prev_failed_img = False
             (rows, cols, chnl) = raw_frame.shape
-            cv2.imshow("raw frame", raw_frame)
-            cv2.waitKey(1)
+            #cv2.imshow("raw frame", raw_frame)
+            #cv2.waitKey(1)
 
             corrected_frame = cv2.warpPerspective(raw_frame, 
                                                   self.perspective_matrix,
@@ -167,8 +167,8 @@ class Camera_Interface:
             blurred_img = cv2.GaussianBlur(corrected_frame, (5, 5), 0)
             hsv_img = cv2.cvtColor(blurred_img, cv2.COLOR_BGR2HSV)
             mask = cv2.inRange(hsv_img, self._RED_LOWER, self._RED_UPPER)
-            #cv2.imshow("red mask", mask)
-            #cv2.waitKey(1)
+            cv2.imshow("red mask", mask)
+            cv2.waitKey(1)
 
             # Find center of mass of red blob on X
             # I collapse the mask on X by summing each column and then I find
@@ -251,6 +251,8 @@ class Driver_Controller:
 
     _THROTTLE_FWD = 4
     _THROTTLE_BKD = 1
+    _STEER_LEFT = 4
+    _STEER_RIGHT = 9
 
     # Thresholds to stop the car:
     _CLOSE_ENOUGH = 100 # when it is close enough to the setpoint
@@ -276,10 +278,15 @@ class Driver_Controller:
         self.setpoint_y = self._SET_POINTS_ARRAY[self.current_setpoint][1]
 
         self.out_of_bounds = 0
+        self.undrivable = False
 
-        self.car_command = 's5'
-        self.direction = 'f'
-        self.throttle = 0
+        self.car_command = 's5s5' #stop throttle and stop steering
+
+        self.throttle_dir = 'f'
+        self.throttle_mag = 0
+        self.steering_dir = 'l'
+        self.steering_mag = 0
+
         self.esp_control = car_coms
         return
     
@@ -299,37 +306,35 @@ class Driver_Controller:
         self.error_y = y - self.setpoint_y
         self.error_magnitude = math.sqrt(self.error_x**2 + self.error_y**2)
 
-        self.current_frame = current_frame
-        self.display_image()
-
         # Check if this state is drivable
-        self.car_command = 's5'
+        self.car_command = 's5s5'
+        self.undrivable = False
         if ((self.x_pos is ERROR_VALUE) or
             (self.y_pos is ERROR_VALUE) or
             (self.x_dot is ERROR_VALUE) or
             (self.y_dot is ERROR_VALUE)):
+            self.undrivable = True
             car_coms.write_serial(self.car_command)
             print("Error: position or velocity error. " + 
                   "Car command: {}".format(self.car_command))
-            return
         
         # Only update the heading if the velocities are non-zero:
         if ((x_dot**2 > 0)):
             self.heading = math.atan(self.y_dot/self.x_dot)
             self.heading_x = math.cos(self.heading)
             self.heading_y = math.sin(self.heading)
-            print("(x_dot, y_dot): ({:.2f},{:.2f})".format(x_dot, y_dot))
-            print("Updating heading 1: {:.2f}".format(self.heading))
+            #print("(x_dot, y_dot): ({:.2f},{:.2f})".format(x_dot, y_dot))
+            #print("Updating heading 1: {:.2f}".format(self.heading))
         else:
             if (y_dot**2 > 0):
                 self.heading = 1.57 * (1 if self.y_dot >= 0 else -1)
                 self.heading_x = math.cos(self.heading)
                 self.heading_y = math.sin(self.heading)
-                print("(x_dot, y_dot): ({:.2f},{:.2f})".format(x_dot, y_dot))
-                print("Updating heading 2: {:.2f}".format(self.heading))
+                #print("(x_dot, y_dot): ({:.2f},{:.2f})".format(x_dot, y_dot))
+                #print("Updating heading 2: {:.2f}".format(self.heading))
 
         # Check if we are too close to the border 
-        if ((self.x_pos < self.BORDER_MIN) or
+        if ((not self.undrivable) and (self.x_pos < self.BORDER_MIN) or
             (self.y_pos < self.BORDER_MIN) or
             (self.x_pos > IMG_WIDTH - self.BORDER_MIN) or
             (self.y_pos > IMG_HEIGHT - self.BORDER_MIN)):
@@ -338,52 +343,112 @@ class Driver_Controller:
             FRAME_DELAY = 60
             self.out_of_bounds += 1
             if self.out_of_bounds % FRAME_DELAY == 0:
-                self.direction = 'f' if self.direction == 'b' else 'b'
-                self.throttle = (self._THROTTLE_FWD if self.direction == 'f' 
-                             else self._THROTTLE_BKD)
-                self.steering = ('l' if self.direction == 'f' else 'r')
-            self.car_command = "{}{}".format(self.direction, self.throttle)
-            car_coms.write_serial(self.car_command)
-            print("Error: <<< OUT OF BOUNDS >>>. Reverse direction." + 
-                  "Car command: {}".format(self.car_command))
-            return
+                selected_command = False
+                if (self.x_pos < self.BORDER_MIN):
+                    print("Left border")
+                    # Set throttle
+                    self.throttle_dir = 'f' if self.throttle_dir == 'b' else 'b'
+                    self.throttle_mag = (self._THROTTLE_FWD if self.throttle_dir == 'f' 
+                                    else self._THROTTLE_BKD)
+                    # Set steering
+                    self.steering_dir = ('r' if 
+                                         ((self.throttle_dir == 'f') and 
+                                          (self.heading > 0)) 
+                                          else 'l')
+                    self.steering_mag = (self._STEER_LEFT if self.steering_dir == 'l' 
+                                        else self._STEER_RIGHT)
+                    selected_command = True
+                
+                if (self.x_pos > IMG_WIDTH - self.BORDER_MIN) and (not selected_command):
+                    print("Right border")
+                    # Set throttle
+                    self.throttle_dir = 'f' if self.throttle_dir == 'b' else 'b'
+                    self.throttle_mag = (self._THROTTLE_FWD if self.throttle_dir == 'f' 
+                                    else self._THROTTLE_BKD)
+                    # Set steering
+                    self.steering_dir = ('l' if 
+                                         ((self.throttle_dir == 'f') and 
+                                          (self.heading > 0)) 
+                                          else 'r')
+                    self.steering_mag = (self._STEER_LEFT if self.steering_dir == 'l' 
+                                        else self._STEER_RIGHT)
+                    selected_command = True
+
+                if (self.y_pos > IMG_HEIGHT - self.BORDER_MIN) and (not selected_command):
+                    print("Bottom border")
+                    # Set throttle
+                    self.throttle_dir = 'f' if self.throttle_dir == 'b' else 'b'
+                    self.throttle_mag = (self._THROTTLE_FWD if self.throttle_dir == 'f' 
+                                    else self._THROTTLE_BKD)
+                    # Set steering
+                    self.steering_dir = ('r' if self.throttle_dir == 'f' else 'l')
+                    self.steering_mag = (self._STEER_LEFT if self.steering_dir == 'l' 
+                                        else self._STEER_RIGHT)
+                    selected_command = True
+
+                if (self.y_pos < self.BORDER_MIN) and (not selected_command):
+                    print("Top border")
+                    # Set throttle
+                    self.throttle_dir = 'f' if self.throttle_dir == 'b' else 'b'
+                    self.throttle_mag = (self._THROTTLE_FWD if self.throttle_dir == 'f' 
+                                    else self._THROTTLE_BKD)
+                    # Set steering
+                    self.steering_dir = ('l' if self.throttle_dir == 'f' else 'r')
+                    self.steering_mag = (self._STEER_LEFT if self.steering_dir == 'l' 
+                                        else self._STEER_RIGHT)
+                    selected_command = True
+                
+                # Compose and send the command
+                self.car_command = "{}{}{}{}".format(
+                    self.throttle_dir, int(self.throttle_mag),
+                    self.steering_dir, int(self.steering_mag))
+                car_coms.write_serial(self.car_command)
+                print("Error: <<< OUT OF BOUNDS >>>. Reverse direction." + 
+                    "Car command: {}".format(self.car_command))
         else:
             print(">>> In bounds <<<<")
             self.out_of_bounds = 0
 
-        # Determine the command for the car:
-        # Determine the direction
-        error_vector = np.array([self.error_x, self.error_y])
-        heading_vector = np.array([self.heading_x, self.heading_y])
-        # Go forward if the dot product is positive and backwards if negative
-        self.direction = 'f' if np.dot(error_vector, heading_vector) > 0 else 'b'
-        # Determine the speed        forward_magnitude = 3 if direction is 'f' else 2 #self.error_magnitude * forward_kp
+        if ((not self.undrivable) and (self.out_of_bounds == 0)):
+            # Determine the command for the car:
+            # Determine the direction
+            error_vector = np.array([self.error_x, self.error_y])
+            heading_vector = np.array([self.heading_x, self.heading_y])
+            # Go forward if the dot product is positive and backwards if negative
+            self.direction = 'f' if np.dot(error_vector, heading_vector) > 0 else 'b'
+            # Determine the speed        forward_magnitude = 3 if direction is 'f' else 2 #self.error_magnitude * forward_kp
 
-        forward_kp = 0.01
-        self.throttle = (self._THROTTLE_FWD if self.direction == 'f' 
-                        else self._THROTTLE_BKD) #self.error_magnitude * forward_kp
+            forward_kp = 0.01
+            self.throttle_mag = (self._THROTTLE_FWD if self.throttle_dir == 'f' 
+                            else self._THROTTLE_BKD) #self.error_magnitude * forward_kp
 
-        # Check if we are close enough to current setpoint:
-        if (self.error_magnitude > self._CLOSE_ENOUGH):
-            self.car_command = '{}{}'.format(self.direction,int(self.throttle))
-        else:
-            self.car_command = 's5'
-            # Set the setpoint to the next setpoint:
-            self.current_setpoint = ((self.current_setpoint + 1) 
-                                     if (self.current_setpoint < (len(self._SET_POINTS_ARRAY) - 1)) 
-                                     else 0)
-            self.setpoint_x = self._SET_POINTS_ARRAY[self.current_setpoint][0]
-            self.setpoint_y = self._SET_POINTS_ARRAY[self.current_setpoint][1]
+            # Check if we are close enough to current setpoint:
+            if (self.error_magnitude > self._CLOSE_ENOUGH):
+                self.car_command = '{}{}{}{}'.format(
+                    self.throttle_dir,int(self.throttle_mag),
+                    self.steering_dir,int(self.steering_mag))
+            else:
+                # We are close enough stop and go to next waypoint
+                self.car_command = 's5s5'
+                # Set the setpoint to the next setpoint:
+                self.current_setpoint = ((self.current_setpoint + 1) 
+                                        if (self.current_setpoint < (len(self._SET_POINTS_ARRAY) - 1)) 
+                                        else 0)
+                self.setpoint_x = self._SET_POINTS_ARRAY[self.current_setpoint][0]
+                self.setpoint_y = self._SET_POINTS_ARRAY[self.current_setpoint][1]
 
-        # Send command        
-        car_coms.write_serial(self.car_command)
+            # Send command        
+            car_coms.write_serial(self.car_command)
 
-        if (False):
-            print("*** Driving: ")
-            print("Error (x, y): ({}, {}) Error magnitude: {:.2f}".
-                format(self.error_x, self.error_y, self.error_magnitude))
-            print("Car heading: {}".format(self.heading))
-            print("Car command: {}".format(car_command))
+            if (False):
+                print("*** Driving: ")
+                print("Error (x, y): ({}, {}) Error magnitude: {:.2f}".
+                    format(self.error_x, self.error_y, self.error_magnitude))
+                print("Car heading: {}".format(self.heading))
+                print("Car command: {}".format(car_command))
+        
+        self.current_frame = current_frame
+        self.display_image()
     
     def display_image(self):
         txt_font = cv2.FONT_HERSHEY_SIMPLEX
@@ -476,7 +541,7 @@ driver = Driver_Controller(car_coms)
 def clean_up(car_coms):
     # Stop the car
     print("Stopping car")
-    car_coms.write_serial('s5')
+    car_coms.write_serial('s5s5')
 
 atexit.register(clean_up, car_coms)
 
