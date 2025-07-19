@@ -14,7 +14,7 @@
 
 #define INCREMENT 100
 
-#define ZERO_PWM 1400
+#define ZERO_PWM 1400 //This corresponds to about 1.7V
 #define MAX_PWM 3200
 #define MIN_PWM 0
 
@@ -93,7 +93,7 @@ void loop() {
         Serial.print(" Steering: ");
         Serial.print(steering);
         break;
-      case 'l':
+      case 'l': // left steer is between ZERO_PWM and MAX_PWM
         throttle = MIN_PWM;
         steering = ZERO_PWM + cmd_strength;
         Serial.print("ESP: Driving left. Throttle: ");
@@ -101,7 +101,7 @@ void loop() {
         Serial.print(" Steering: ");
         Serial.print(steering);
         break;
-      case 'r':
+      case 'r': // right steer is between MIN_PWM and ZERO_PWM
         throttle = MIN_PWM;
         steering = ZERO_PWM - cmd_strength;
         Serial.print("ESP: Driving right. Throttle: ");
