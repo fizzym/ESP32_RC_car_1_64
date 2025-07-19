@@ -43,10 +43,18 @@ while (not connected):
 
 # Sending commands to ESP32
 while (True):
-    command = input("Enter command (fx, bx, lx, rx, s): ")
+    '''
+    Command format is direction (forward, backward) strength steering 
+    (left, right) strength
+
+    For example:
+     'f2l0' : forward 2; left 0 (i.e. straight)
+     'b3r2' : backward 3; right 2
+    '''
+    command = input("Enter command (fxlx, bxlx, lx, rx, s): ")
 
     # Sanitize the command:
-    regexp = re.compile(r"^[fblrs]\d$")
+    regexp = re.compile(r"^[fbs]\d[lrs]\d$")
     if regexp.search(command):
         write_serial(command)
         print("Sent command: {}".format(command))

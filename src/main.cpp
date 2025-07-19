@@ -18,12 +18,13 @@
 #define MAX_PWM 3200
 #define MIN_PWM 0
 
-#define MAX_BUFF_LEN 2
+#define MAX_BUFF_LEN 4
 
 int throttle = ZERO_PWM;
 int steering = ZERO_PWM;
 int prev_throttle = ZERO_PWM;
 int prev_steering = ZERO_PWM;
+bool stopped = false;
 
 int state = 1;
 int iteration = 0;
@@ -57,6 +58,14 @@ void loop() {
     // a is a character determining command type and x is a numerical
     // indicating command strength percentage in increments of 10% 
     // this is (mapped to PWM);
+    /*
+    Command format is direction (forward, backward) strength steering 
+    (left, right) strength
+
+    For example:
+     'f2l0' : forward 2; left 0 (i.e. straight)
+     'b3r2' : backward 3; right 2
+    */
     i = 0;
     character = Serial.read();
     while (character != '\n'){
@@ -69,6 +78,8 @@ void loop() {
       if (i > MAX_BUFF_LEN){
         cmd_buffer[0] = 's';
         cmd_buffer[1] = '0';
+        cmd_buffer[2] = 's';
+        cmd_buffer[3] = '0';
         break;
       }
     }
@@ -79,47 +90,46 @@ void loop() {
     switch (cmd_buffer[0]) {
       case 'f': // forward PWM is between MIN_PWM and ZERO_PWM
         throttle = ZERO_PWM - cmd_strength;
-        steering = ZERO_PWM;
-        Serial.print("ESP: Driving forward. Throttle: ");
-        Serial.print(throttle);
-        Serial.print(" Steering: ");
-        Serial.print(steering);
         break;
       case 'b': // backward PWM is between ZERO_PWM and MAX_PWM
         throttle = ZERO_PWM + cmd_strength;
-        steering = ZERO_PWM;
-        Serial.print("ESP: Driving backward. Throttle: ");
-        Serial.print(throttle);
-        Serial.print(" Steering: ");
-        Serial.print(steering);
-        break;
-      case 'l': // left steer is between ZERO_PWM and MAX_PWM
-        throttle = MIN_PWM;
-        steering = ZERO_PWM + cmd_strength;
-        Serial.print("ESP: Driving left. Throttle: ");
-        Serial.print(throttle);
-        Serial.print(" Steering: ");
-        Serial.print(steering);
-        break;
-      case 'r': // right steer is between MIN_PWM and ZERO_PWM
-        throttle = MIN_PWM;
-        steering = ZERO_PWM - cmd_strength;
-        Serial.print("ESP: Driving right. Throttle: ");
-        Serial.print(throttle);
-        Serial.print(" Steering: ");
-        Serial.print(steering);
         break;
       default: //stop
-        throttle = ZERO_PWM;
-        steering = ZERO_PWM;
+        throttle = ZERO_PWM - 50 + ((cmd_strength - 100) / 10);
+        stopped = true;
+        break;
+    }
+
+    cmd_strength = (cmd_buffer[3] - 48 + 1) * INCREMENT;
+    switch (cmd_buffer[2]) {
+      case 'l': // left steer is between ZERO_PWM and MAX_PWM
+        steering = ZERO_PWM + cmd_strength;
+        break;
+      case 'r': // right steer is between MIN_PWM and ZERO_PWM
+        steering = ZERO_PWM - cmd_strength;
+        break;
+      default: //stop
+        steering = ZERO_PWM - 50 + ((cmd_strength - 100) / 10);
+        stopped = true;
+    }
+
+    if (true) {
+      if (!stopped){
+        Serial.print("ESP: Driving. Throttle: ");
+        Serial.print(throttle);
+        Serial.print(" Steering: ");
+        Serial.print(steering);
+      }
+    else{
         // To investigate dead band s5 is ZERO_PWM while s0 is 
         // ZERO_PWM - 50 and S9 is ZERO_PWM + 50
         Serial.print("ESP: Stopped. Throttle: ");
-        Serial.print(throttle -50 + ((cmd_strength - 100) / 10));
+        Serial.print(throttle);
         Serial.print(" Steering: ");
-        Serial.print(steering -50 + ((cmd_strength - 100) / 10));
-        break;
+        Serial.print(steering);
+      }
     }
+   
     digitalWrite(LED_PIN, HIGH);
   }
   else {
